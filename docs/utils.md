@@ -7,6 +7,7 @@ The `utils` package provides common helper functions for arrays, bytes, strings,
 - **Array**: Random element selection from slices (generic)
 - **Bool**: Human-readable "Yes"/"No" conversion
 - **Bytes**: Fixed-length string buffers and byte slice concatenation
+- **Pointer**: Convert any value to a pointer (generic)
 - **Discord**: Send messages to Discord channels via webhooks
 - **JSON**: Validation of JSON object strings
 - **String**: Null-terminated string reading and random alphanumeric generation
@@ -74,6 +75,38 @@ fmt.Println(utils.BoolToYesNo(enabled)) // "No"
 **Returns:**
 
 - `"Yes"` if value is true, `"No"` if value is false
+
+---
+
+## Pointer Utilities
+
+### Pointer
+
+Returns a pointer to the given value. Generic over any type `T`; useful when you need a `*T` (e.g. optional struct fields, API payloads, or functions that accept pointers).
+
+```go
+import "github.com/cyberinferno/go-utils/utils"
+
+// Primitives
+n := utils.Pointer(42)   // *int
+s := utils.Pointer("hi") // *string
+b := utils.Pointer(true) // *bool
+
+// Structs and custom types
+type Config struct{ Host string }
+cfg := utils.Pointer(Config{Host: "localhost"}) // *Config
+
+// Optional field in JSON/API payloads
+payload := map[string]*int{"count": utils.Pointer(10)}
+```
+
+**Parameters:**
+
+- **value**: The value to convert to a pointer (any type T)
+
+**Returns:**
+
+- A pointer to the given value (`*T`)
 
 ---
 
@@ -309,6 +342,12 @@ fmt.Println(ist) // "2024-01-15 17:30:00"
 |------------|-----------------------------------|----------------------------|
 | BoolToYesNo| `func BoolToYesNo(value bool) string` | "Yes" or "No" from bool.   |
 
+### Pointer
+
+| Function | Signature                | Description                    |
+|----------|---------------------------|--------------------------------|
+| Pointer  | `func Pointer[T any](value T) *T` | Returns a pointer to the value. |
+
 ### Bytes
 
 | Function                   | Signature                                      | Description                    |
@@ -431,11 +470,12 @@ func main() {
 
 ## Best Practices
 
-1. **GetRandomElement**: Ensure the slice is non-empty (e.g. check `len(arr) > 0`) to avoid panics, or use a dedicated "empty" value for your type.
-2. **SendDiscordNotification**: Keep webhook URLs in configuration (environment variables or secrets), not in source code. For important alerts, consider adding retries or a wrapper that logs errors.
-3. **IsJsonString**: Use when you specifically need a JSON *object*. For arrays or raw values, unmarshal into `json.RawMessage` or a concrete type and check errors instead.
-4. **GenerateRandomString**: Use for non-security randomness (e.g. IDs, test data). For secrets or tokens, use `crypto/rand` with a safe encoding.
-5. **Time conversions**: Both GMT and UTC conversion functions assume the input is in the stated format; invalid layout or timezone returns an error. Handle errors in production.
+1. **Pointer**: Use when building structs or maps that require `*T` (e.g. optional fields, JSON with `omitempty`, or APIs that distinguish null from zero value). Avoid storing the result in long-lived globals if the pointed-to value could be stack-allocated.
+2. **GetRandomElement**: Ensure the slice is non-empty (e.g. check `len(arr) > 0`) to avoid panics, or use a dedicated "empty" value for your type.
+3. **SendDiscordNotification**: Keep webhook URLs in configuration (environment variables or secrets), not in source code. For important alerts, consider adding retries or a wrapper that logs errors.
+4. **IsJsonString**: Use when you specifically need a JSON *object*. For arrays or raw values, unmarshal into `json.RawMessage` or a concrete type and check errors instead.
+5. **GenerateRandomString**: Use for non-security randomness (e.g. IDs, test data). For secrets or tokens, use `crypto/rand` with a safe encoding.
+6. **Time conversions**: Both GMT and UTC conversion functions assume the input is in the stated format; invalid layout or timezone returns an error. Handle errors in production.
 
 ---
 
