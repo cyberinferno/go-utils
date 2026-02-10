@@ -15,3 +15,6 @@ packages:
   github.com/cyberinferno/go-utils/cacher:
     config:
       all: true
+  github.com/cyberinferno/go-utils/logger:
+    config:
+      all: true

@@ -15,7 +15,7 @@ The `cacher` package provides a generic, type-safe caching interface with automa
 ## Installation
 
 ```go
-import "github.com/ABS-CBN-Corporation/go-common/cacher"
+import "github.com/cyberinferno/go-utils/cacher"
 ```
 
 ## Creating a Cacher
@@ -26,7 +26,7 @@ Create a Redis-based cacher instance using `NewRedisCacher`. You'll need a Redis
 
 ```go
 import (
-    "github.com/ABS-CBN-Corporation/go-common/cacher"
+    "github.com/cyberinferno/go-utils/cacher"
     "github.com/redis/go-redis/v9"
 )
 
@@ -59,7 +59,7 @@ Create an in-memory cacher instance using `NewMemoryCacher`. This implementation
 
 ```go
 import (
-    "github.com/ABS-CBN-Corporation/go-common/cacher"
+    "github.com/cyberinferno/go-utils/cacher"
     "time"
 )
 
@@ -354,7 +354,7 @@ import (
     "log"
     "time"
 
-    "github.com/ABS-CBN-Corporation/go-common/cacher"
+    "github.com/cyberinferno/go-utils/cacher"
     "github.com/redis/go-redis/v9"
 )
 
@@ -429,7 +429,7 @@ import (
     "net/http"
     "time"
 
-    "github.com/ABS-CBN-Corporation/go-common/cacher"
+    "github.com/cyberinferno/go-utils/cacher"
     "github.com/redis/go-redis/v9"
 )
 
@@ -521,7 +521,7 @@ import (
     "sync"
     "time"
 
-    "github.com/ABS-CBN-Corporation/go-common/cacher"
+    "github.com/cyberinferno/go-utils/cacher"
     "github.com/redis/go-redis/v9"
 )
 
@@ -587,7 +587,7 @@ import (
     "log"
     "time"
 
-    "github.com/ABS-CBN-Corporation/go-common/cacher"
+    "github.com/cyberinferno/go-utils/cacher"
     "github.com/redis/go-redis/v9"
 )
 
@@ -660,7 +660,7 @@ import (
     "log"
     "time"
 
-    "github.com/ABS-CBN-Corporation/go-common/cacher"
+    "github.com/cyberinferno/go-utils/cacher"
     "github.com/redis/go-redis/v9"
 )
 
