@@ -13,7 +13,7 @@ The `perfmonitor` package provides a simple and efficient way to measure elapsed
 ## Installation
 
 ```go
-import "github.com/ABS-CBN-Corporation/go-common/perfmonitor"
+import "github.com/cyberinferno/go-utils/perfmonitor"
 ```
 
 ## Creating a Performance Monitor
@@ -21,7 +21,7 @@ import "github.com/ABS-CBN-Corporation/go-common/perfmonitor"
 Create a new performance monitor instance using `NewPerformanceMonitor`:
 
 ```go
-import "github.com/ABS-CBN-Corporation/go-common/perfmonitor"
+import "github.com/cyberinferno/go-utils/perfmonitor"
 
 pm := perfmonitor.NewPerformanceMonitor()
 ```
@@ -59,7 +59,7 @@ package main
 import (
     "fmt"
     "time"
-    "github.com/ABS-CBN-Corporation/go-common/perfmonitor"
+    "github.com/cyberinferno/go-utils/perfmonitor"
 )
 
 func main() {
