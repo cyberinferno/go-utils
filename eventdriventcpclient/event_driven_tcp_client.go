@@ -97,6 +97,11 @@ type Config struct {
 	// DataLengthBasedRead, when true, reads a 4-byte little-endian length prefix
 	// and then that many bytes per message instead of streaming into fixed-size chunks.
 	DataLengthBasedRead bool
+	// KeepAlive enables TCP keep-alive probes on the connection.
+	KeepAlive bool
+	// KeepAlivePeriod is the interval between TCP keep-alive probes when KeepAlive is true.
+	// Only used when KeepAlive is true; ignored otherwise.
+	KeepAlivePeriod time.Duration
 }
 
 // DefaultEventDrivenTCPClientConfig returns a Config with default values for the given address.
@@ -107,7 +112,8 @@ type Config struct {
 //
 // Returns:
 //   - A Config with defaults: ReconnectInterval 5s, ReadBufferSize 4096,
-//     WriteTimeout 10s, ConnectionTimeout 10s, ReadTimeout 0, DataLengthBasedRead false.
+//     WriteTimeout 10s, ConnectionTimeout 10s, ReadTimeout 0, DataLengthBasedRead false,
+//     KeepAlive true, KeepAlivePeriod 30s.
 func DefaultEventDrivenTCPClientConfig(address string) Config {
 	return Config{
 		Address:             address,
@@ -118,6 +124,8 @@ func DefaultEventDrivenTCPClientConfig(address string) Config {
 		ReadTimeout:         0,
 		ConnectionTimeout:   10 * time.Second,
 		DataLengthBasedRead: false,
+		KeepAlive:           true,
+		KeepAlivePeriod:     30 * time.Second,
 	}
 }
 
@@ -341,6 +349,15 @@ func (c *EventDrivenTCPClient) connect() error {
 		c.setState(Disconnected, err)
 		c.emitError(err)
 		return err
+	}
+
+	if c.config.KeepAlive {
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			_ = tcpConn.SetKeepAlive(true)
+			if c.config.KeepAlivePeriod > 0 {
+				_ = tcpConn.SetKeepAlivePeriod(c.config.KeepAlivePeriod)
+			}
+		}
 	}
 
 	c.mu.Lock()

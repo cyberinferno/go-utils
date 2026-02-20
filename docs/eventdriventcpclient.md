@@ -8,6 +8,7 @@ The `eventdriventcpclient` package provides an event-driven TCP client that noti
 - **Concurrent Safe**: All exported methods are safe for use from multiple goroutines
 - **Optional Auto-Reconnect**: When enabled, the client automatically reconnects after connection loss with configurable interval
 - **Configurable Timeouts**: Connection, read, and write timeouts; use zero for no timeout
+- **TCP Keep-Alive**: Optional TCP keep-alive with configurable period (default 30s); enabled by default
 - **Two Read Modes**: Stream reads (fixed buffer size) or length-prefixed messages (4-byte little-endian length + payload)
 - **Clear Lifecycle**: Disconnected → Connecting → Connected; optional Reconnecting; Close for shutdown
 
@@ -33,6 +34,8 @@ Configuration is provided via the `Config` struct. Use `DefaultEventDrivenTCPCli
 | `ReadTimeout` | `time.Duration` | Max duration to wait for read data; 0 means no timeout. |
 | `ConnectionTimeout` | `time.Duration` | Max duration for establishing a new connection. |
 | `DataLengthBasedRead` | `bool` | When true, each message is read as 4-byte little-endian length + that many bytes. |
+| `KeepAlive` | `bool` | When true, enables TCP keep-alive probes on the connection (default: true). |
+| `KeepAlivePeriod` | `time.Duration` | Interval between TCP keep-alive probes when KeepAlive is true (default: 30s). |
 
 ### DefaultEventDrivenTCPClientConfig
 
@@ -54,6 +57,8 @@ cfg.WriteTimeout = 5 * time.Second
 cfg.ReadTimeout = 30 * time.Second
 cfg.ConnectionTimeout = 10 * time.Second
 cfg.DataLengthBasedRead = true
+cfg.KeepAlive = true
+cfg.KeepAlivePeriod = 30 * time.Second  // or set to 0 to use OS default when KeepAlive is true
 ```
 
 **Parameters:**
@@ -62,7 +67,7 @@ cfg.DataLengthBasedRead = true
 
 **Returns:**
 
-- A `Config` with defaults: ReconnectInterval 5s, ReadBufferSize 4096, WriteTimeout 10s, ConnectionTimeout 10s, ReadTimeout 0, DataLengthBasedRead false.
+- A `Config` with defaults: ReconnectInterval 5s, ReadBufferSize 4096, WriteTimeout 10s, ConnectionTimeout 10s, ReadTimeout 0, DataLengthBasedRead false, KeepAlive true, KeepAlivePeriod 30s.
 
 ---
 
@@ -434,6 +439,8 @@ type Config struct {
     ReadTimeout         time.Duration
     ConnectionTimeout   time.Duration
     DataLengthBasedRead bool
+    KeepAlive           bool
+    KeepAlivePeriod     time.Duration
 }
 ```
 
@@ -482,6 +489,8 @@ Configuration for the client. Use `DefaultEventDrivenTCPClientConfig(address)` a
 6. **Choose read mode appropriately**: Use stream mode for raw streams or when you implement your own framing; use `DataLengthBasedRead = true` when the protocol is length-prefixed (4-byte little-endian + payload).
 
 7. **Set timeouts in production**: Use `ConnectionTimeout`, `ReadTimeout`, and `WriteTimeout` to avoid hanging on dead connections.
+
+8. **Keep-alive**: TCP keep-alive is on by default (30s period) to detect dead connections; set `KeepAlive = false` to disable, or adjust `KeepAlivePeriod` as needed.
 
 ---
 
