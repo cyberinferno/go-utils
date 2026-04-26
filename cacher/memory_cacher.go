@@ -1,9 +1,11 @@
 package cacher
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/patrickmn/go-cache"
@@ -15,24 +17,37 @@ import (
 // (thundering herd problem) when multiple concurrent requests occur for the
 // same cache key.
 type MemoryCacher[T any] struct {
-	cache *cache.Cache
-	group singleflight.Group
+	cache    *cache.Cache
+	group    singleflight.Group
+	maxItems int
+	mu       sync.Mutex
+	lru      *list.List
+	entries  map[string]*list.Element
 }
 
 // NewMemoryCacher creates a new in-memory cache instance with the specified
-// default expiration and cleanup interval.
+// default expiration, cleanup interval, and maximum item count.
 //
 // Parameters:
 //   - defaultExpiration: Default TTL for cached items (use cache.NoExpiration for no default)
 //   - cleanupInterval: Interval at which expired items are removed from the cache
+//   - maxItems: Maximum cached items before LRU eviction (<= 0 means unlimited)
 //
 // Returns:
 //   - A new InMemoryCacher instance
-func NewMemoryCacher[T any](defaultExpiration, cleanupInterval time.Duration) Cacher[T] {
-	return &MemoryCacher[T]{
-		cache: cache.New(defaultExpiration, cleanupInterval),
-		group: singleflight.Group{},
+func NewMemoryCacher[T any](defaultExpiration, cleanupInterval time.Duration, maxItems int) Cacher[T] {
+	memoryCache := cache.New(defaultExpiration, cleanupInterval)
+	cacher := &MemoryCacher[T]{
+		cache:    memoryCache,
+		group:    singleflight.Group{},
+		maxItems: maxItems,
+		lru:      list.New(),
+		entries:  make(map[string]*list.Element),
 	}
+	memoryCache.OnEvicted(func(key string, _ interface{}) {
+		cacher.removeLRU(key)
+	})
+	return cacher
 }
 
 // GetOrFetch retrieves a value from the cache, or fetches it using the provided
@@ -56,9 +71,14 @@ func (c *MemoryCacher[T]) GetOrFetch(
 ) (T, error) {
 	var zero T
 
+	if ttl == 0 {
+		return fetchFn(ctx)
+	}
+
 	// Try to get from cache first
 	if val, found := c.cache.Get(key); found {
 		if typedVal, ok := val.(T); ok {
+			c.touchLRU(key)
 			return typedVal, nil
 		}
 	}
@@ -70,6 +90,7 @@ func (c *MemoryCacher[T]) GetOrFetch(
 		// Another goroutine might have already populated it
 		if cachedVal, found := c.cache.Get(key); found {
 			if typedVal, ok := cachedVal.(T); ok {
+				c.touchLRU(key)
 				return typedVal, nil
 			}
 		}
@@ -82,6 +103,7 @@ func (c *MemoryCacher[T]) GetOrFetch(
 
 		// Store in cache with specified TTL
 		c.cache.Set(key, fetchedVal, ttl)
+		c.enforceMaxItems(key)
 
 		return fetchedVal, nil
 	})
@@ -107,6 +129,7 @@ func (c *MemoryCacher[T]) Delete(ctx context.Context, key string) error {
 	default:
 	}
 	c.cache.Delete(key)
+	c.removeLRU(key)
 	return nil
 }
 
@@ -118,6 +141,7 @@ func (c *MemoryCacher[T]) Clear(ctx context.Context) error {
 	default:
 	}
 	c.cache.Flush()
+	c.clearLRU()
 	return nil
 }
 
@@ -152,9 +176,84 @@ func (c *MemoryCacher[T]) DeleteByPrefix(ctx context.Context, prefix string) (in
 
 		if strings.HasPrefix(key, prefix) {
 			c.cache.Delete(key)
+			c.removeLRU(key)
 			deletedCount++
 		}
 	}
 
 	return deletedCount, nil
+}
+
+func (c *MemoryCacher[T]) touchLRU(key string) {
+	if c.maxItems <= 0 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if elem, ok := c.entries[key]; ok {
+		c.lru.MoveToFront(elem)
+		return
+	}
+
+	c.entries[key] = c.lru.PushFront(key)
+}
+
+func (c *MemoryCacher[T]) enforceMaxItems(key string) {
+	if c.maxItems <= 0 {
+		return
+	}
+
+	var evictedKeys []string
+
+	c.mu.Lock()
+	if elem, ok := c.entries[key]; ok {
+		c.lru.MoveToFront(elem)
+	} else {
+		c.entries[key] = c.lru.PushFront(key)
+	}
+
+	for c.lru.Len() > c.maxItems {
+		elem := c.lru.Back()
+		if elem == nil {
+			break
+		}
+
+		evictedKey := elem.Value.(string)
+		c.lru.Remove(elem)
+		delete(c.entries, evictedKey)
+		evictedKeys = append(evictedKeys, evictedKey)
+	}
+	c.mu.Unlock()
+
+	for _, evictedKey := range evictedKeys {
+		c.cache.Delete(evictedKey)
+	}
+}
+
+func (c *MemoryCacher[T]) removeLRU(key string) {
+	if c.maxItems <= 0 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if elem, ok := c.entries[key]; ok {
+		c.lru.Remove(elem)
+		delete(c.entries, key)
+	}
+}
+
+func (c *MemoryCacher[T]) clearLRU() {
+	if c.maxItems <= 0 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.lru.Init()
+	c.entries = make(map[string]*list.Element)
 }

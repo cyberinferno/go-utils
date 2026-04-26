@@ -13,7 +13,7 @@ import (
 )
 
 func TestNewMemoryCacher(t *testing.T) {
-	c := NewMemoryCacher[string](time.Minute, 10*time.Minute)
+	c := NewMemoryCacher[string](time.Minute, 10*time.Minute, 0)
 	require.NotNil(t, c)
 
 	mc, ok := c.(*MemoryCacher[string])
@@ -22,7 +22,7 @@ func TestNewMemoryCacher(t *testing.T) {
 }
 
 func TestMemoryCacher_GetOrFetch_CacheMiss(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	fetchCount := 0
@@ -38,7 +38,7 @@ func TestMemoryCacher_GetOrFetch_CacheMiss(t *testing.T) {
 }
 
 func TestMemoryCacher_GetOrFetch_CacheHit(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	fetchCount := 0
@@ -64,7 +64,7 @@ func TestMemoryCacher_GetOrFetch_CacheHit(t *testing.T) {
 }
 
 func TestMemoryCacher_GetOrFetch_FetchError(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	fetchFn := func(ctx context.Context) (string, error) {
@@ -88,7 +88,7 @@ func TestMemoryCacher_GetOrFetch_FetchError(t *testing.T) {
 }
 
 func TestMemoryCacher_GetOrFetch_ContextCancelled(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Already cancelled
@@ -109,7 +109,7 @@ func TestMemoryCacher_GetOrFetch_ContextCancelled(t *testing.T) {
 }
 
 func TestMemoryCacher_GetOrFetch_ConcurrentSameKey_Singleflight(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	var fetchCount int32
@@ -144,7 +144,7 @@ func TestMemoryCacher_GetOrFetch_ConcurrentSameKey_Singleflight(t *testing.T) {
 }
 
 func TestMemoryCacher_GetOrFetch_ConcurrentDifferentKeys(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	var fetchCount int32
@@ -174,7 +174,7 @@ func TestMemoryCacher_GetOrFetch_WithStructType(t *testing.T) {
 		Name string
 	}
 
-	c := NewMemoryCacher[payload](cache.NoExpiration, time.Minute).(*MemoryCacher[payload])
+	c := NewMemoryCacher[payload](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[payload])
 	ctx := context.Background()
 
 	want := payload{ID: 1, Name: "test"}
@@ -188,7 +188,7 @@ func TestMemoryCacher_GetOrFetch_WithStructType(t *testing.T) {
 }
 
 func TestMemoryCacher_Delete(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	// Set a value
@@ -210,7 +210,7 @@ func TestMemoryCacher_Delete(t *testing.T) {
 }
 
 func TestMemoryCacher_Delete_ContextCancelled(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -219,7 +219,7 @@ func TestMemoryCacher_Delete_ContextCancelled(t *testing.T) {
 }
 
 func TestMemoryCacher_Delete_NonExistentKey(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	err := c.Delete(ctx, "nonexistent")
@@ -227,7 +227,7 @@ func TestMemoryCacher_Delete_NonExistentKey(t *testing.T) {
 }
 
 func TestMemoryCacher_Clear(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	fetchFn := func(ctx context.Context) (string, error) { return "v", nil }
@@ -247,7 +247,7 @@ func TestMemoryCacher_Clear(t *testing.T) {
 }
 
 func TestMemoryCacher_Clear_ContextCancelled(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -256,7 +256,7 @@ func TestMemoryCacher_Clear_ContextCancelled(t *testing.T) {
 }
 
 func TestMemoryCacher_ItemCount(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	count, err := c.ItemCount(ctx)
@@ -276,7 +276,7 @@ func TestMemoryCacher_ItemCount(t *testing.T) {
 }
 
 func TestMemoryCacher_ItemCount_ContextCancelled(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -286,7 +286,7 @@ func TestMemoryCacher_ItemCount_ContextCancelled(t *testing.T) {
 }
 
 func TestMemoryCacher_DeleteByPrefix(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	fetchFn := func(ctx context.Context) (string, error) { return "v", nil }
@@ -309,7 +309,7 @@ func TestMemoryCacher_DeleteByPrefix(t *testing.T) {
 }
 
 func TestMemoryCacher_DeleteByPrefix_NoMatch(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	_, _ = c.GetOrFetch(ctx, "user:1", time.Minute, func(ctx context.Context) (string, error) { return "v", nil })
@@ -323,7 +323,7 @@ func TestMemoryCacher_DeleteByPrefix_NoMatch(t *testing.T) {
 }
 
 func TestMemoryCacher_DeleteByPrefix_EmptyPrefix(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	_, _ = c.GetOrFetch(ctx, "a", time.Minute, func(ctx context.Context) (string, error) { return "v", nil })
@@ -338,7 +338,7 @@ func TestMemoryCacher_DeleteByPrefix_EmptyPrefix(t *testing.T) {
 }
 
 func TestMemoryCacher_DeleteByPrefix_ContextCancelled(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -348,7 +348,7 @@ func TestMemoryCacher_DeleteByPrefix_ContextCancelled(t *testing.T) {
 }
 
 func TestMemoryCacher_DeleteByPrefix_ContextCancelledDuringIteration(t *testing.T) {
-	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute).(*MemoryCacher[string])
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 0).(*MemoryCacher[string])
 	ctx := context.Background()
 
 	// Add many keys so iteration has time to be cancelled
@@ -371,6 +371,117 @@ func TestMemoryCacher_DeleteByPrefix_ContextCancelledDuringIteration(t *testing.
 		assert.ErrorIs(t, err, context.Canceled)
 	}
 	_ = n
+}
+
+func TestMemoryCacher_GetOrFetch_TTLZeroBypassesCache(t *testing.T) {
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 2).(*MemoryCacher[string])
+	ctx := context.Background()
+
+	_, err := c.GetOrFetch(ctx, "key", time.Minute, func(ctx context.Context) (string, error) {
+		return "cached", nil
+	})
+	require.NoError(t, err)
+
+	fetchCount := 0
+	fetchFn := func(ctx context.Context) (string, error) {
+		fetchCount++
+		return "fresh", nil
+	}
+
+	val, err := c.GetOrFetch(ctx, "key", 0, fetchFn)
+	require.NoError(t, err)
+	assert.Equal(t, "fresh", val)
+	assert.Equal(t, 1, fetchCount)
+
+	val, err = c.GetOrFetch(ctx, "key", time.Minute, func(ctx context.Context) (string, error) {
+		return "miss", nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "cached", val)
+}
+
+func TestMemoryCacher_GetOrFetch_EvictsLeastRecentlyUsed(t *testing.T) {
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 2).(*MemoryCacher[string])
+	ctx := context.Background()
+
+	_, err := c.GetOrFetch(ctx, "a", time.Minute, func(ctx context.Context) (string, error) { return "a1", nil })
+	require.NoError(t, err)
+	_, err = c.GetOrFetch(ctx, "b", time.Minute, func(ctx context.Context) (string, error) { return "b1", nil })
+	require.NoError(t, err)
+
+	// Access "a" so "b" becomes the least recently used entry.
+	val, err := c.GetOrFetch(ctx, "a", time.Minute, func(ctx context.Context) (string, error) { return "a2", nil })
+	require.NoError(t, err)
+	assert.Equal(t, "a1", val)
+
+	_, err = c.GetOrFetch(ctx, "c", time.Minute, func(ctx context.Context) (string, error) { return "c1", nil })
+	require.NoError(t, err)
+
+	val, err = c.GetOrFetch(ctx, "a", time.Minute, func(ctx context.Context) (string, error) { return "a2", nil })
+	require.NoError(t, err)
+	assert.Equal(t, "a1", val)
+
+	val, err = c.GetOrFetch(ctx, "b", time.Minute, func(ctx context.Context) (string, error) { return "b2", nil })
+	require.NoError(t, err)
+	assert.Equal(t, "b2", val)
+}
+
+func TestMemoryCacher_LRUMetadataStaysConsistentAfterDeletes(t *testing.T) {
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 2).(*MemoryCacher[string])
+	ctx := context.Background()
+
+	_, err := c.GetOrFetch(ctx, "a", time.Minute, func(ctx context.Context) (string, error) { return "a1", nil })
+	require.NoError(t, err)
+	_, err = c.GetOrFetch(ctx, "b", time.Minute, func(ctx context.Context) (string, error) { return "b1", nil })
+	require.NoError(t, err)
+	require.NoError(t, c.Delete(ctx, "a"))
+
+	_, err = c.GetOrFetch(ctx, "c", time.Minute, func(ctx context.Context) (string, error) { return "c1", nil })
+	require.NoError(t, err)
+	_, err = c.GetOrFetch(ctx, "d", time.Minute, func(ctx context.Context) (string, error) { return "d1", nil })
+	require.NoError(t, err)
+
+	val, err := c.GetOrFetch(ctx, "b", time.Minute, func(ctx context.Context) (string, error) { return "b2", nil })
+	require.NoError(t, err)
+	assert.Equal(t, "b2", val)
+
+	require.NoError(t, c.Clear(ctx))
+	count, err := c.ItemCount(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+}
+
+func TestMemoryCacher_LRUMetadataStaysConsistentAfterDeleteByPrefix(t *testing.T) {
+	c := NewMemoryCacher[string](cache.NoExpiration, time.Minute, 4).(*MemoryCacher[string])
+	ctx := context.Background()
+
+	fetchFn := func(value string) FetchFunc[string] {
+		return func(ctx context.Context) (string, error) { return value, nil }
+	}
+
+	_, err := c.GetOrFetch(ctx, "user:1", time.Minute, fetchFn("u1"))
+	require.NoError(t, err)
+	_, err = c.GetOrFetch(ctx, "user:2", time.Minute, fetchFn("u2"))
+	require.NoError(t, err)
+	_, err = c.GetOrFetch(ctx, "order:1", time.Minute, fetchFn("o1"))
+	require.NoError(t, err)
+
+	n, err := c.DeleteByPrefix(ctx, "user:")
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	_, err = c.GetOrFetch(ctx, "a", time.Minute, fetchFn("a1"))
+	require.NoError(t, err)
+	_, err = c.GetOrFetch(ctx, "b", time.Minute, fetchFn("b1"))
+	require.NoError(t, err)
+	_, err = c.GetOrFetch(ctx, "c", time.Minute, fetchFn("c1"))
+	require.NoError(t, err)
+	_, err = c.GetOrFetch(ctx, "d", time.Minute, fetchFn("d1"))
+	require.NoError(t, err)
+
+	val, err := c.GetOrFetch(ctx, "order:1", time.Minute, fetchFn("o2"))
+	require.NoError(t, err)
+	assert.Equal(t, "o2", val)
 }
 
 func TestMemoryCacher_Interface(t *testing.T) {

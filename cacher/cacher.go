@@ -17,7 +17,8 @@ type FetchFunc[T any] func(ctx context.Context) (T, error)
 type Cacher[T any] interface {
 	// GetOrFetch retrieves a value from the cache, or fetches it using the provided
 	// function if it's not cached. The fetched value is then stored in the cache
-	// with the specified TTL for future requests.
+	// with the specified TTL for future requests. A zero TTL bypasses the cache
+	// entirely and always calls the fetch function.
 	//
 	// Parameters:
 	//   - ctx: Context for cancellation and timeout control
