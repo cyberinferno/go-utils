@@ -1,11 +1,13 @@
 # Cacher Documentation
 
-The `cacher` package provides a generic, type-safe caching interface with automatic cache population and distributed locking to prevent cache stampede (thundering herd) problems. The package includes a Redis-based implementation that handles concurrent cache misses gracefully.
+The `cacher` package provides a generic, type-safe caching interface with automatic cache population, configurable LRU item limits, and distributed locking to prevent cache stampede (thundering herd) problems. The package includes memory and Redis-based implementations.
 
 ## Features
 
 - **Type-Safe Generic Interface**: Works with any Go type using generics
 - **Automatic Cache Population**: Fetches and caches values automatically on cache misses
+- **Configurable LRU Limits**: Evicts least recently used entries when `maxItems` is exceeded
+- **TTL Zero Bypass**: A `ttl` of `0` always calls the fetch function and does not read or write cache
 - **Distributed Locking**: Prevents cache stampede when multiple goroutines request the same missing key
 - **Lock Extension**: Automatically extends locks during long-running fetch operations
 - **Exponential Backoff**: Efficient polling with exponential backoff for waiting goroutines
@@ -38,7 +40,7 @@ redisClient := redis.NewClient(&redis.Options{
 })
 
 // Create cacher for string values
-stringCacher := cacher.NewRedisCacher[string](redisClient)
+stringCacher := cacher.NewRedisCacher[string](redisClient, 1000)
 
 // Create cacher for custom types
 type User struct {
@@ -46,12 +48,13 @@ type User struct {
     Name  string `json:"name"`
     Email string `json:"email"`
 }
-userCacher := cacher.NewRedisCacher[User](redisClient)
+userCacher := cacher.NewRedisCacher[User](redisClient, 1000)
 ```
 
 ### Parameters
 
 - **client**: A `*redis.Client` instance from `github.com/redis/go-redis/v9` configured with your Redis connection settings
+- **maxItems**: Maximum number of cached items before LRU eviction. Use `0` or a negative value for unlimited size.
 
 ### Memory-Based Cacher
 
@@ -63,12 +66,14 @@ import (
     "time"
 )
 
-// Create memory cacher with default expiration and cleanup interval
+// Create memory cacher with default expiration, cleanup interval, and max items
 // - defaultExpiration: Default TTL for cached items (use cache.NoExpiration for no default)
 // - cleanupInterval: Interval at which expired items are removed from the cache
+// - maxItems: Maximum cached items before LRU eviction (<= 0 means unlimited)
 memoryCacher := cacher.NewMemoryCacher[string](
     5*time.Minute,  // default expiration
     10*time.Minute, // cleanup interval
+	1000,           // max items
 )
 
 // Create cacher for custom types
@@ -80,6 +85,7 @@ type User struct {
 userCacher := cacher.NewMemoryCacher[User](
     time.Hour,      // default expiration
     30*time.Minute, // cleanup interval
+	1000,           // max items
 )
 ```
 
@@ -87,6 +93,7 @@ userCacher := cacher.NewMemoryCacher[User](
 
 - **defaultExpiration**: Default TTL for cached items. Use `cache.NoExpiration` for items that don't expire by default.
 - **cleanupInterval**: Interval at which expired items are automatically removed from the cache. Set to `0` to disable automatic cleanup.
+- **maxItems**: Maximum number of cached items before LRU eviction. Use `0` or a negative value for unlimited size.
 
 **Note**: Memory cacher is suitable for single-process applications. For distributed systems, use the Redis-based cacher.
 
@@ -157,7 +164,33 @@ data, err := cacher.GetOrFetch(ctx, "key", time.Hour, fetchFn)
 
 // Long-lived cache (24 hours)
 data, err := cacher.GetOrFetch(ctx, "key", 24*time.Hour, fetchFn)
+
+// Bypass cache entirely and always call fetchFn
+data, err := cacher.GetOrFetch(ctx, "key", 0, fetchFn)
 ```
+
+When `ttl` is `0`, `GetOrFetch` does not read an existing cached value, does not write the fetched value back to the cache, and does not update LRU metadata. This is useful for call sites that need the same fetch API but require fresh data.
+
+### LRU Max Item Limits
+
+Both memory and Redis cachers accept `maxItems` in their constructors. When `maxItems` is greater than zero, cache hits and successful cache writes mark a key as recently used. Adding a new item beyond the limit evicts the least recently used cached key.
+
+```go
+// Keep at most 1,000 items in Redis.
+redisCacher := cacher.NewRedisCacher[User](redisClient, 1000)
+
+// Keep at most 500 items in process memory.
+memoryCacher := cacher.NewMemoryCacher[User](
+	time.Hour,
+	10*time.Minute,
+	500,
+)
+
+// Disable max-item eviction.
+unlimitedCacher := cacher.NewRedisCacher[User](redisClient, 0)
+```
+
+Redis LRU tracking is managed by the cacher using internal Redis keys. `Delete`, `DeleteByPrefix`, and `Clear` clean up the associated LRU metadata for managed keys.
 
 ## Cache Management
 
@@ -169,7 +202,9 @@ Removes a specific key from the cache:
 
 ```go
 // Delete a specific cache key
-cacher.Delete("user:123")
+if err := cacher.Delete(ctx, "user:123"); err != nil {
+	log.Printf("Failed to delete cache key: %v", err)
+}
 ```
 
 ### Clear
@@ -178,7 +213,9 @@ Removes all items from the cache:
 
 ```go
 // Clear all cached items
-cacher.Clear()
+if err := cacher.Clear(ctx); err != nil {
+	log.Printf("Failed to clear cache: %v", err)
+}
 ```
 
 **Note**: For Redis cacher, this clears all keys in the current database. Use with caution in production environments.
@@ -189,7 +226,10 @@ Returns the number of items currently in the cache:
 
 ```go
 // Get the number of cached items
-count := cacher.ItemCount()
+count, err := cacher.ItemCount(ctx)
+if err != nil {
+	log.Printf("Failed to get cache size: %v", err)
+}
 fmt.Printf("Cache contains %d items\n", count)
 ```
 
@@ -199,11 +239,17 @@ Deletes all keys that start with the given prefix. This is useful for invalidati
 
 ```go
 // Delete all user-related cache entries
-deletedCount := cacher.DeleteByPrefix("user:")
+deletedCount, err := cacher.DeleteByPrefix(ctx, "user:")
+if err != nil {
+	log.Printf("Failed to delete user cache entries: %v", err)
+}
 fmt.Printf("Deleted %d keys with prefix 'user:'\n", deletedCount)
 
 // Delete all product cache entries
-deletedCount = cacher.DeleteByPrefix("product:")
+deletedCount, err = cacher.DeleteByPrefix(ctx, "product:")
+if err != nil {
+	log.Printf("Failed to delete product cache entries: %v", err)
+}
 fmt.Printf("Deleted %d keys with prefix 'product:'\n", deletedCount)
 ```
 
@@ -218,12 +264,13 @@ func (s *UserService) UpdateUser(userID int, updates User) error {
     }
     
     // Invalidate specific user cache
-    s.cacher.Delete(fmt.Sprintf("user:%d", userID))
-    
+    if err := s.cacher.Delete(context.Background(), fmt.Sprintf("user:%d", userID)); err != nil {
+        return err
+    }
+
     // Optionally invalidate all related caches
-    s.cacher.DeleteByPrefix(fmt.Sprintf("user:%d:", userID))
-    
-    return nil
+    _, err = s.cacher.DeleteByPrefix(context.Background(), fmt.Sprintf("user:%d:", userID))
+    return err
 }
 ```
 
@@ -232,7 +279,10 @@ func (s *UserService) UpdateUser(userID int, updates User) error {
 ```go
 func (s *ProductService) RefreshAllProducts() error {
     // Clear all product-related caches
-    deletedCount := s.cacher.DeleteByPrefix("product:")
+    deletedCount, err := s.cacher.DeleteByPrefix(context.Background(), "product:")
+    if err != nil {
+        return err
+    }
     log.Printf("Invalidated %d product cache entries", deletedCount)
     
     // Fetch and cache fresh data
@@ -371,7 +421,7 @@ type UserService struct {
 
 func NewUserService(redisClient *redis.Client) *UserService {
     return &UserService{
-        cacher: cacher.NewRedisCacher[User](redisClient),
+        cacher: cacher.NewRedisCacher[User](redisClient, 1000),
         ctx:    context.Background(),
     }
 }
@@ -448,7 +498,7 @@ type ProductService struct {
 
 func NewProductService(redisClient *redis.Client, apiURL string) *ProductService {
     return &ProductService{
-        cacher: cacher.NewRedisCacher[Product](redisClient),
+        cacher: cacher.NewRedisCacher[Product](redisClient, 1000),
         apiURL: apiURL,
         ctx:    context.Background(),
     }
@@ -534,7 +584,7 @@ func main() {
         Addr: "localhost:6379",
     })
     
-    cacher := cacher.NewRedisCacher[Data](redisClient)
+    cacher := cacher.NewRedisCacher[Data](redisClient, 1000)
     ctx := context.Background()
     
     var wg sync.WaitGroup
@@ -605,7 +655,7 @@ type ConfigService struct {
 
 func NewConfigService(redisClient *redis.Client) *ConfigService {
     return &ConfigService{
-        cacher: cacher.NewRedisCacher[Config](redisClient),
+        cacher: cacher.NewRedisCacher[Config](redisClient, 1000),
         ctx:    context.Background(),
     }
 }
@@ -674,7 +724,7 @@ func main() {
         Addr: "localhost:6379",
     })
     
-    cacher := cacher.NewRedisCacher[Item](redisClient)
+    cacher := cacher.NewRedisCacher[Item](redisClient, 1000)
     ctx := context.Background()
     
     fetchItem := func(ctx context.Context) (Item, error) {
@@ -790,13 +840,13 @@ Create separate cacher instances for different types:
 
 ```go
 // String cacher
-stringCacher := cacher.NewRedisCacher[string](redisClient)
+stringCacher := cacher.NewRedisCacher[string](redisClient, 1000)
 
 // User cacher
-userCacher := cacher.NewRedisCacher[User](redisClient)
+userCacher := cacher.NewRedisCacher[User](redisClient, 1000)
 
 // Config cacher
-configCacher := cacher.NewRedisCacher[Config](redisClient)
+configCacher := cacher.NewRedisCacher[Config](redisClient, 1000)
 ```
 
 ### 7. Monitor Cache Performance
@@ -828,7 +878,9 @@ if err != nil {
 }
 
 // Invalidate cache for this user
-cacher.Delete(fmt.Sprintf("user:%d", userID))
+if err := cacher.Delete(ctx, fmt.Sprintf("user:%d", userID)); err != nil {
+    return err
+}
 ```
 
 **Option 2: Delete by prefix for related data**
@@ -841,7 +893,9 @@ if err != nil {
 }
 
 // Invalidate all user-related caches (user:123:profile, user:123:settings, etc.)
-cacher.DeleteByPrefix(fmt.Sprintf("user:%d:", userID))
+if _, err := cacher.DeleteByPrefix(ctx, fmt.Sprintf("user:%d:", userID)); err != nil {
+    return err
+}
 ```
 
 **Option 3: Versioned cache keys**
@@ -859,7 +913,9 @@ newKey := fmt.Sprintf("user:%d:v%d", userID, version)
 
 ```go
 // Clear entire cache (useful for testing or major updates)
-cacher.Clear()
+if err := cacher.Clear(ctx); err != nil {
+    return err
+}
 ```
 
 ### 9. Handle Redis Connection Errors
@@ -945,19 +1001,19 @@ type Cacher[T any] interface {
         ttl time.Duration,
         fetchFn FetchFunc[T],
     ) (T, error)
-    
-    // Delete removes a key from the cache.
-    Delete(key string)
-    
-    // Clear removes all items from the cache.
-    Clear()
-    
-    // ItemCount returns the number of items in the cache.
-    ItemCount() int
-    
-    // DeleteByPrefix deletes all keys with the given prefix.
-    // Returns the number of keys deleted.
-    DeleteByPrefix(prefix string) int
+
+	// Delete removes a key from the cache.
+	Delete(ctx context.Context, key string) error
+
+	// Clear removes all items from the cache.
+	Clear(ctx context.Context) error
+
+	// ItemCount returns the number of items in the cache.
+	ItemCount(ctx context.Context) (int, error)
+
+	// DeleteByPrefix deletes all keys with the given prefix.
+	// Returns the number of keys deleted.
+	DeleteByPrefix(ctx context.Context, prefix string) (int, error)
 }
 ```
 
@@ -974,31 +1030,33 @@ type FetchFunc[T any] func(ctx context.Context) (T, error)
 ### NewRedisCacher Function
 
 ```go
-func NewRedisCacher[T any](client *redis.Client) Cacher[T]
+func NewRedisCacher[T any](client *redis.Client, maxItems int) Cacher[T]
 ```
 
-Creates a new Redis-based cacher instance. The type parameter `T` determines what type of values will be cached.
+Creates a new Redis-based cacher instance. The type parameter `T` determines what type of values will be cached. When `maxItems` is greater than zero, the cacher tracks managed keys in Redis and evicts least recently used entries as needed.
 
 **Parameters:**
 - `client`: A `*redis.Client` instance from `github.com/redis/go-redis/v9`
+- `maxItems`: Maximum cached items before LRU eviction (`<= 0` means unlimited)
 
 **Returns:**
-- A `Cacher[T]` implementation that uses Redis for storage and distributed locking
+- A `Cacher[T]` implementation that uses Redis for storage, LRU eviction, and distributed locking
 
 ### NewMemoryCacher Function
 
 ```go
-func NewMemoryCacher[T any](defaultExpiration, cleanupInterval time.Duration) *MemoryCacher[T]
+func NewMemoryCacher[T any](defaultExpiration, cleanupInterval time.Duration, maxItems int) Cacher[T]
 ```
 
-Creates a new in-memory cacher instance. The type parameter `T` determines what type of values will be cached.
+Creates a new in-memory cacher instance. The type parameter `T` determines what type of values will be cached. When `maxItems` is greater than zero, the cacher evicts least recently used entries as needed.
 
 **Parameters:**
 - `defaultExpiration`: Default TTL for cached items (use `cache.NoExpiration` for no default expiration)
 - `cleanupInterval`: Interval at which expired items are removed from the cache
+- `maxItems`: Maximum cached items before LRU eviction (`<= 0` means unlimited)
 
 **Returns:**
-- A `*MemoryCacher[T]` implementation that uses in-memory storage with singleflight for cache stampede prevention
+- A `Cacher[T]` implementation that uses in-memory storage, LRU eviction, and singleflight for cache stampede prevention
 
 ## Error Handling
 
