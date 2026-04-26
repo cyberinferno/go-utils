@@ -16,8 +16,16 @@ import (
 // cache stampede (thundering herd) problems when multiple goroutines
 // try to fetch the same missing cache entry simultaneously.
 type redisCacher[T any] struct {
-	client *redis.Client
+	client    *redis.Client
+	maxItems  int
+	lruKey    string
+	lruSeqKey string
 }
+
+const (
+	redisDefaultLRUKey    = "__go_utils_cacher_lru"
+	redisDefaultLRUSeqKey = "__go_utils_cacher_lru_seq"
+)
 
 // NewRedisCacher creates a new Redis-based cacher instance.
 // It takes a Redis client and returns a Cacher implementation that
@@ -26,10 +34,13 @@ type redisCacher[T any] struct {
 // Example:
 //
 //	client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-//	cacher := NewRedisCacher[string](client)
-func NewRedisCacher[T any](client *redis.Client) Cacher[T] {
+//	cacher := NewRedisCacher[string](client, 1000)
+func NewRedisCacher[T any](client *redis.Client, maxItems int) Cacher[T] {
 	return &redisCacher[T]{
-		client: client,
+		client:    client,
+		maxItems:  maxItems,
+		lruKey:    redisDefaultLRUKey,
+		lruSeqKey: redisDefaultLRUSeqKey,
 	}
 }
 
@@ -59,6 +70,10 @@ func NewRedisCacher[T any](client *redis.Client) Cacher[T] {
 func (c *redisCacher[T]) GetOrFetch(ctx context.Context, key string, ttl time.Duration, fetchFn FetchFunc[T]) (T, error) {
 	var zero T
 
+	if ttl == 0 {
+		return fetchFn(ctx)
+	}
+
 	// Try to get from cache first
 	val, err := c.client.Get(ctx, key).Result()
 	if err == nil {
@@ -67,11 +82,18 @@ func (c *redisCacher[T]) GetOrFetch(ctx context.Context, key string, ttl time.Du
 			return zero, fmt.Errorf("failed to unmarshal cached value: %w", err)
 		}
 
+		if err := c.touchLRU(ctx, key); err != nil {
+			return zero, err
+		}
+
 		return result, nil
 	}
 
 	if !errors.Is(err, redis.Nil) {
 		return zero, fmt.Errorf("redis get error: %w", err)
+	}
+	if err := c.removeLRU(ctx, key); err != nil {
+		return zero, err
 	}
 
 	// Cache miss - try to acquire lock
@@ -118,6 +140,12 @@ func (c *redisCacher[T]) GetOrFetch(ctx context.Context, key string, ttl time.Du
 		// Set cache value
 		if err := c.client.Set(bgCtx, key, data, ttl).Err(); err != nil {
 			return zero, fmt.Errorf("failed to cache result: %w", err)
+		}
+		if err := c.recordLRU(bgCtx, key); err != nil {
+			return zero, err
+		}
+		if err := c.trimLRU(bgCtx); err != nil {
+			return zero, err
 		}
 
 		return result, nil
@@ -213,12 +241,18 @@ func (c *redisCacher[T]) waitForCache(
 			if err := json.Unmarshal([]byte(val), &result); err != nil {
 				return zero, fmt.Errorf("failed to unmarshal cached value: %w", err)
 			}
+			if err := c.touchLRU(ctx, key); err != nil {
+				return zero, err
+			}
 
 			return result, nil
 		}
 
 		if !errors.Is(err, redis.Nil) {
 			return zero, fmt.Errorf("redis get error: %w", err)
+		}
+		if err := c.removeLRU(ctx, key); err != nil {
+			return zero, err
 		}
 
 		// Check if lock still exists
@@ -235,6 +269,9 @@ func (c *redisCacher[T]) waitForCache(
 				var result T
 				if err := json.Unmarshal([]byte(val), &result); err != nil {
 					return zero, fmt.Errorf("failed to unmarshal cached value: %w", err)
+				}
+				if err := c.touchLRU(ctx, key); err != nil {
+					return zero, err
 				}
 				return result, nil
 			}
@@ -255,6 +292,9 @@ func (c *redisCacher[T]) Delete(ctx context.Context, key string) error {
 	if err := c.client.Del(ctx, key).Err(); err != nil {
 		return fmt.Errorf("failed to delete key: %w", err)
 	}
+	if err := c.removeLRU(ctx, key); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -268,6 +308,18 @@ func (c *redisCacher[T]) Clear(ctx context.Context) error {
 
 // ItemCount returns the number of items in the cache.
 func (c *redisCacher[T]) ItemCount(ctx context.Context) (int, error) {
+	if c.maxItems > 0 {
+		if err := c.pruneStaleLRU(ctx); err != nil {
+			return 0, err
+		}
+
+		count, err := c.client.ZCard(ctx, c.lruKey).Result()
+		if err != nil {
+			return 0, fmt.Errorf("failed to get cache size: %w", err)
+		}
+		return int(count), nil
+	}
+
 	count, err := c.client.DBSize(ctx).Result()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get cache size: %w", err)
@@ -278,6 +330,40 @@ func (c *redisCacher[T]) ItemCount(ctx context.Context) (int, error) {
 // DeleteByPrefix deletes all keys with the given prefix.
 func (c *redisCacher[T]) DeleteByPrefix(ctx context.Context, prefix string) (int, error) {
 	deletedCount := 0
+
+	if c.maxItems > 0 {
+		keys, err := c.client.ZRange(ctx, c.lruKey, 0, -1).Result()
+		if err != nil {
+			return 0, fmt.Errorf("failed to scan lru keys: %w", err)
+		}
+
+		var keysToDelete []string
+		for _, key := range keys {
+			select {
+			case <-ctx.Done():
+				return deletedCount, ctx.Err()
+			default:
+			}
+
+			if strings.HasPrefix(key, prefix) {
+				keysToDelete = append(keysToDelete, key)
+			}
+		}
+
+		if len(keysToDelete) == 0 {
+			return 0, nil
+		}
+
+		deleted, err := c.client.Del(ctx, keysToDelete...).Result()
+		if err != nil {
+			return deletedCount, fmt.Errorf("failed to delete keys: %w", err)
+		}
+		if err := c.client.ZRem(ctx, c.lruKey, stringSliceToAny(keysToDelete)...).Err(); err != nil {
+			return int(deleted), fmt.Errorf("failed to remove lru metadata: %w", err)
+		}
+
+		return int(deleted), nil
+	}
 
 	// Use SCAN to iterate through keys with the prefix
 	// This is more efficient than KEYS for large datasets
@@ -312,4 +398,119 @@ func (c *redisCacher[T]) DeleteByPrefix(ctx context.Context, prefix string) (int
 	}
 
 	return deletedCount, nil
+}
+
+func (c *redisCacher[T]) touchLRU(ctx context.Context, key string) error {
+	if c.maxItems <= 0 {
+		return nil
+	}
+	return c.recordLRU(ctx, key)
+}
+
+func (c *redisCacher[T]) recordLRU(ctx context.Context, key string) error {
+	if c.maxItems <= 0 {
+		return nil
+	}
+
+	score, err := c.client.Incr(ctx, c.lruSeqKey).Result()
+	if err != nil {
+		return fmt.Errorf("failed to advance lru metadata: %w", err)
+	}
+
+	if err := c.client.ZAdd(ctx, c.lruKey, redis.Z{
+		Score:  float64(score),
+		Member: key,
+	}).Err(); err != nil {
+		return fmt.Errorf("failed to update lru metadata: %w", err)
+	}
+
+	return nil
+}
+
+func (c *redisCacher[T]) trimLRU(ctx context.Context) error {
+	if c.maxItems <= 0 {
+		return nil
+	}
+
+	if err := c.pruneStaleLRU(ctx); err != nil {
+		return err
+	}
+
+	count, err := c.client.ZCard(ctx, c.lruKey).Result()
+	if err != nil {
+		return fmt.Errorf("failed to count lru metadata: %w", err)
+	}
+
+	overflow := count - int64(c.maxItems)
+	if overflow <= 0 {
+		return nil
+	}
+
+	keys, err := c.client.ZRange(ctx, c.lruKey, 0, overflow-1).Result()
+	if err != nil {
+		return fmt.Errorf("failed to read lru metadata: %w", err)
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+
+	if err := c.client.Del(ctx, keys...).Err(); err != nil {
+		return fmt.Errorf("failed to evict lru keys: %w", err)
+	}
+	if err := c.client.ZRem(ctx, c.lruKey, stringSliceToAny(keys)...).Err(); err != nil {
+		return fmt.Errorf("failed to trim lru metadata: %w", err)
+	}
+
+	return nil
+}
+
+func stringSliceToAny(values []string) []interface{} {
+	result := make([]interface{}, len(values))
+	for i, value := range values {
+		result[i] = value
+	}
+	return result
+}
+
+func (c *redisCacher[T]) removeLRU(ctx context.Context, key string) error {
+	if c.maxItems <= 0 {
+		return nil
+	}
+
+	if err := c.client.ZRem(ctx, c.lruKey, key).Err(); err != nil {
+		return fmt.Errorf("failed to remove lru metadata: %w", err)
+	}
+
+	return nil
+}
+
+func (c *redisCacher[T]) pruneStaleLRU(ctx context.Context) error {
+	if c.maxItems <= 0 {
+		return nil
+	}
+
+	keys, err := c.client.ZRange(ctx, c.lruKey, 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("failed to read lru metadata: %w", err)
+	}
+
+	for _, key := range keys {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		exists, err := c.client.Exists(ctx, key).Result()
+		if err != nil {
+			return fmt.Errorf("failed to check cache key existence: %w", err)
+		}
+		if exists == 0 {
+			if err := c.client.ZRem(ctx, c.lruKey, key).Err(); err != nil {
+				return fmt.Errorf("failed to prune lru metadata: %w", err)
+			}
+		}
+	}
+
+	return nil
 }
